@@ -48,3 +48,15 @@ export interface OpportunitySummary {
     latitude: number | null;
     longitude: number | null;
 }
+
+export interface OpportunityRecommendation extends OpportunitySummary {
+    distanceKm: number | null;
+    recommendationScore: number;
+    matchedSkillCount: number;
+    requiredSkillCount: number;
+}
+
+export interface OpportunityRecommendationResult {
+    opportunities: OpportunityRecommendation[];
+    volunteerSkillCount: number;
+}

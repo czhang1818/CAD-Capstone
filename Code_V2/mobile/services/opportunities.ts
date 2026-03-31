@@ -1,5 +1,5 @@
 import api from './api';
-import { OpportunityState, OpportunitySummary } from '../types/opportunity';
+import { OpportunityState, OpportunitySummary, OpportunityRecommendationResult } from '../types/opportunity';
 
 export const opportunityService = {
     getById: async (id: string): Promise<OpportunityState> => {
@@ -46,5 +46,24 @@ export const opportunityService = {
     validateGeo: async (id: string, lat: number, lon: number): Promise<boolean> => {
         const res = await api.post<{ isValid: boolean }>(`/api/opportunities/${id}/validate-geo`, { lat, lon });
         return res.data.isValid;
+    },
+
+    recommendForVolunteer: async (params: {
+        volunteerId: string;
+        lat?: number;
+        lon?: number;
+        query?: string;
+        category?: string;
+        take?: number;
+    }): Promise<OpportunityRecommendationResult> => {
+        const p = new URLSearchParams();
+        p.append('volunteerId', params.volunteerId);
+        if (params.lat != null) p.append('lat', String(params.lat));
+        if (params.lon != null) p.append('lon', String(params.lon));
+        if (params.query) p.append('query', params.query);
+        if (params.category) p.append('category', params.category);
+        if (params.take != null) p.append('take', String(params.take));
+        const res = await api.get<OpportunityRecommendationResult>(`/api/opportunities/recommend?${p.toString()}`);
+        return res.data;
     },
 };
