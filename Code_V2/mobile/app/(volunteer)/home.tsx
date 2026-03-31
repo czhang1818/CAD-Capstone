@@ -81,16 +81,20 @@ export default function HomeScreen() {
         if (viewMode !== 'map' || locationStatus !== 'idle') return;
         (async () => {
             setLocationStatus('locating');
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
+            try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') {
+                    setLocationStatus('denied');
+                    return;
+                }
+                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                const c = { lat: loc.coords.latitude, lon: loc.coords.longitude };
+                setCoords(c);
+                setLocationStatus('ready');
+                fetchOpportunities(c);
+            } catch {
                 setLocationStatus('denied');
-                return;
             }
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            const c = { lat: loc.coords.latitude, lon: loc.coords.longitude };
-            setCoords(c);
-            setLocationStatus('ready');
-            fetchOpportunities(c);
         })();
     }, [viewMode]);
 
@@ -229,10 +233,10 @@ export default function HomeScreen() {
                         </View>
                     )}
                     {locationStatus === 'denied' && (
-                        <View style={styles.mapOverlay}>
-                            <MaterialCommunityIcons name="map-marker-off" size={32} color={COLORS.textSecondary} />
-                            <RNText style={styles.mapOverlayText}>Location denied — showing all opportunities</RNText>
-                        </View>
+                        <TouchableOpacity style={styles.mapOverlay} onPress={() => setLocationStatus('idle')}>
+                            <MaterialCommunityIcons name="map-marker-off" size={20} color={COLORS.textSecondary} />
+                            <RNText style={styles.mapOverlayText}>Location unavailable — tap to retry</RNText>
+                        </TouchableOpacity>
                     )}
                     <MapView
                         ref={mapRef}
