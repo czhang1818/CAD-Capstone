@@ -1,9 +1,11 @@
 import { Tabs } from 'expo-router';
 import { COLORS } from '../../constants/config';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AIAssistant from '../../components/AIAssistant';
 
 export default function AdminLayout() {
     return (
+        <>
         <Tabs
             screenOptions={{
                 headerStyle: { backgroundColor: COLORS.surface },
@@ -16,7 +18,7 @@ export default function AdminLayout() {
             <Tabs.Screen
                 name="organizations"
                 options={{
-                    title: 'Organizations',
+                    title: 'Orgs',
                     tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="office-building" size={size} color={color} />,
                 }}
             />
@@ -41,6 +43,15 @@ export default function AdminLayout() {
                     tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="star-circle" size={size} color={color} />,
                 }}
             />
+            <Tabs.Screen
+                name="system"
+                options={{
+                    title: 'System',
+                    tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="server" size={size} color={color} />,
+                }}
+            />
         </Tabs>
+            <AIAssistant userRole="admin" />
+        </>
     );
 }

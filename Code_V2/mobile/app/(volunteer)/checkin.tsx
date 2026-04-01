@@ -10,15 +10,19 @@ import { volunteerService } from '../../services/volunteers';
 import { applicationService } from '../../services/applications';
 import { attendanceService } from '../../services/attendance';
 import { opportunityService } from '../../services/opportunities';
-import { ApplicationStatus } from '../../types/enums';
+import { ApplicationStatus, AttendanceStatus } from '../../types/enums';
 import { GeoFenceSettings } from '../../types/opportunity';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { uuid } from 'expo-modules-core';
 
 interface ActiveApp {
     id: string;
     oppId: string;
     oppTitle: string;
     shiftId: string;
+    shiftStartTime?: string | null;
+    attendanceId: string | null;
+    attendanceStatus: string | null;
 }
 
 export default function CheckInScreen() {
@@ -32,17 +36,23 @@ export default function CheckInScreen() {
     const [attendanceId, setAttendanceId] = useState<string | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
 
+    // GPS state machine (matches web flow)
+    const [gpsState, setGpsState] = useState<'idle' | 'locating' | 'ready' | 'error'>('idle');
+    const [errMsg, setErrMsg] = useState('');
+
+
     // Geofence
     const [geoFence, setGeoFence] = useState<GeoFenceSettings | null>(null);
     const [geoFenceLoading, setGeoFenceLoading] = useState(false);
 
-    // QR scanner
+    // QR scanner (camera)
     const [cameraPermission, requestCameraPermission] = useCameraPermissions();
     const [qrScanning, setQrScanning] = useState(false);
     const scannedRef = useRef(false);
 
     // Leaflet map WebView ref
     const mapRef = useRef<WebView>(null);
+    const mapReady = useRef(false);
 
     // Feedback state
     const [showFeedback, setShowFeedback] = useState(false);
@@ -74,15 +84,26 @@ export default function CheckInScreen() {
     const fetchApps = useCallback(async () => {
         try {
             if (!linkedGrainId) return;
-            const apps = await applicationService.getForVolunteer(linkedGrainId);
+            const [apps, attendanceRecords] = await Promise.all([
+                applicationService.getForVolunteer(linkedGrainId),
+                attendanceService.getByVolunteer(linkedGrainId),
+            ]);
+            const doneStatuses = [AttendanceStatus.Pending, AttendanceStatus.CheckedOut, AttendanceStatus.Confirmed, AttendanceStatus.Resolved];
             const results: ActiveApp[] = apps
                 .filter(a => a.status === ApplicationStatus.Approved || a.status === ApplicationStatus.Completed)
-                .map(a => ({
-                    id: a.applicationId,
-                    oppId: a.opportunityId,
-                    oppTitle: `${a.opportunityTitle} (${a.shiftName})`,
-                    shiftId: a.shiftId,
-                }));
+                .map(a => {
+                    const rec = attendanceRecords.find(r => r.opportunityId === a.opportunityId);
+                    return {
+                        id: a.applicationId,
+                        oppId: a.opportunityId,
+                        oppTitle: `${a.opportunityTitle} (${a.shiftName})`,
+                        shiftId: a.shiftId,
+                        shiftStartTime: a.shiftStartTime,
+                        attendanceId: rec?.attendanceId ?? null,
+                        attendanceStatus: rec?.status ?? null,
+                    };
+                })
+                .filter(a => !a.attendanceStatus || !doneStatuses.includes(a.attendanceStatus as AttendanceStatus));
             setActiveApps(results);
         } catch { /* */ } finally {
             setLoading(false);
@@ -91,9 +112,9 @@ export default function CheckInScreen() {
 
     useEffect(() => { fetchApps(); }, [fetchApps]);
 
-    // Inject user position into map whenever location updates
+    // Inject user position into map whenever location updates (only if map is ready)
     useEffect(() => {
-        if (!location) return;
+        if (!location || !mapReady.current) return;
         mapRef.current?.injectJavaScript(
             `updateUser(${location.lat}, ${location.lon}); true;`
         );
@@ -101,13 +122,13 @@ export default function CheckInScreen() {
 
     // Inject geofence into map when a shift is selected
     useEffect(() => {
+        if (!mapReady.current) return;
         if (geoFence) {
             mapRef.current?.injectJavaScript(
                 `updateFence(${geoFence.latitude}, ${geoFence.longitude}, ${geoFence.radiusMeters}); true;`
             );
         } else {
             mapRef.current?.injectJavaScript(`clearFence(); true;`);
-            // Re-center on user if we have location
             if (location) {
                 mapRef.current?.injectJavaScript(
                     `centerOn(${location.lat}, ${location.lon}, 15); true;`
@@ -116,10 +137,19 @@ export default function CheckInScreen() {
         }
     }, [geoFence]);
 
+    // Transition locating → ready once GPS fix arrives
+    useEffect(() => {
+        if (gpsState === 'locating' && location) {
+            setGpsState('ready');
+        }
+    }, [location, gpsState]);
+
     const handleSelectApp = async (app: ActiveApp) => {
         setSelectedApp(app);
         setGeoFence(null);
         setGeoFenceLoading(true);
+        setGpsState('idle');
+        setErrMsg('');
         try {
             const opp = await opportunityService.getById(app.oppId);
             setGeoFence(opp.geoFence ?? null);
@@ -143,35 +173,44 @@ export default function CheckInScreen() {
         return dist <= geoFence.radiusMeters;
     };
 
-    const handleCheckIn = async () => {
-        if (!location || !selectedApp || !linkedGrainId) {
+    // Step 1: user taps "Check In Now" — start locating
+    const handleLocate = () => {
+        if (!selectedApp) {
             Alert.alert('Missing', 'Select an event first.');
+            return;
+        }
+        if (location) {
+            setGpsState('ready');
+        } else {
+            setGpsState('locating');
+            // location watcher is already running; useEffect will fire when it arrives
+        }
+    };
+
+    // Step 2: user taps "Confirm Check-In"
+    const handleCheckIn = async () => {
+        if (!location || !selectedApp || !linkedGrainId) return;
+        if (!selectedApp.attendanceId) {
+            setErrMsg('No attendance record found for this shift. Please contact your coordinator.');
+            setGpsState('error');
             return;
         }
         setActionLoading(true);
         try {
-            const isInRange = await opportunityService.validateGeo(selectedApp.oppId, location.lat, location.lon);
-            if (!isInRange) {
-                Alert.alert('Out of Range', 'You are not within the allowed area. Move closer to the venue and try again.');
-                return;
-            }
-            const newAttendanceId = crypto.randomUUID?.() || `${Date.now()}`;
-            await attendanceService.init(newAttendanceId, {
-                volunteerId: linkedGrainId,
-                applicationId: selectedApp.id,
-                opportunityId: selectedApp.oppId,
-            });
-
-            await attendanceService.checkIn(newAttendanceId, { lat: location.lat, lon: location.lon, proofPhotoUrl: '' });
-            setAttendanceId(newAttendanceId);
+            await attendanceService.checkIn(selectedApp.attendanceId, { lat: location.lat, lon: location.lon, proofPhotoUrl: '' });
+            setAttendanceId(selectedApp.attendanceId);
             setCheckedIn(true);
+            setGpsState('idle');
             Alert.alert('Checked In!', 'You have successfully checked in.');
         } catch (err: any) {
-            Alert.alert('Error', err.response?.data?.toString() || 'Check-in failed');
+            const msg = err?.response?.data;
+            setErrMsg(typeof msg === 'string' ? msg : 'Check-in failed. Please try again.');
+            setGpsState('error');
         } finally {
             setActionLoading(false);
         }
     };
+
 
     // QR Check-In: parse vsms://shift/<opportunityId>/<shiftId>
     const handleBarcodeScanned = async ({ data }: { data: string }) => {
@@ -198,34 +237,54 @@ export default function CheckInScreen() {
             }
             const [opportunityId, shiftId] = parts;
             const apps = await applicationService.getForVolunteer(linkedGrainId);
-            const match = apps.find(
+            let match = apps.find(
                 a => a.opportunityId === opportunityId && a.shiftId === shiftId &&
                     (a.status === ApplicationStatus.Approved || a.status === ApplicationStatus.Completed)
             );
+
+            // No approved application — apply to this shift on the spot
             if (!match) {
-                Alert.alert('No Match', "You don't have an approved application for this shift.", [
-                    { text: 'OK', onPress: () => { scannedRef.current = false; } },
-                ]);
-                return;
+                setActionLoading(true);
+                const { applicationId } = await opportunityService.apply(opportunityId, {
+                    volunteerId: linkedGrainId,
+                    shiftId,
+                    idempotencyKey: uuid.v4(),
+                });
+                await fetchApps();
+                const refreshedApps = await applicationService.getForVolunteer(linkedGrainId);
+                match = refreshedApps.find(a => a.applicationId === applicationId);
+                if (!match) {
+                    Alert.alert('Applied', 'You have been added to this shift. Check in will be available once approved by the coordinator.');
+                    scannedRef.current = false;
+                    setActionLoading(false);
+                    return;
+                }
             }
 
             setActionLoading(true);
-            const newAttendanceId = crypto.randomUUID?.() || `${Date.now()}`;
-            await attendanceService.init(newAttendanceId, {
-                volunteerId: linkedGrainId,
-                applicationId: match.applicationId,
-                opportunityId: match.opportunityId,
-            });
-            await attendanceService.checkIn(newAttendanceId, { lat: 0, lon: 0, proofPhotoUrl: '' });
-            setAttendanceId(newAttendanceId);
+            const matchedApp = activeApps.find(a => a.id === match!.applicationId)
+                ?? (await (async () => { await fetchApps(); return activeApps.find(a => a.id === match!.applicationId); })());
+            const existingAttendanceId = matchedApp?.attendanceId;
+            if (!existingAttendanceId) {
+                Alert.alert('Not Ready', 'No attendance record found for this shift. Please contact your coordinator.', [
+                    { text: 'OK', onPress: () => { scannedRef.current = false; } },
+                ]);
+                setActionLoading(false);
+                return;
+            }
+            await attendanceService.checkIn(existingAttendanceId, { lat: 0, lon: 0, proofPhotoUrl: '' });
+            setAttendanceId(existingAttendanceId);
             setSelectedApp({
-                id: match.applicationId,
-                oppId: match.opportunityId,
-                oppTitle: `${match.opportunityTitle} (${match.shiftName})`,
-                shiftId: match.shiftId,
+                id: match!.applicationId,
+                oppId: match!.opportunityId,
+                oppTitle: `${match!.opportunityTitle} (${match!.shiftName})`,
+                shiftId: match!.shiftId,
+                shiftStartTime: match!.shiftStartTime,
+                attendanceId: existingAttendanceId,
+                attendanceStatus: AttendanceStatus.CheckedIn,
             });
             setCheckedIn(true);
-            Alert.alert('Checked In!', `Successfully checked in to "${match.opportunityTitle}".`);
+            Alert.alert('Checked In!', `Successfully checked in to "${match!.opportunityTitle}".`);
         } catch (err: any) {
             Alert.alert('Check-In Failed', err.response?.data?.toString() || 'An error occurred.');
             scannedRef.current = false;
@@ -252,7 +311,7 @@ export default function CheckInScreen() {
         try {
             await attendanceService.checkOut(attendanceId);
             Alert.alert('Checked Out', 'Would you like to leave feedback?', [
-                { text: 'Skip', onPress: resetState },
+                { text: 'Skip', onPress: () => { resetState(); fetchApps(); } },
                 { text: 'Leave Feedback', onPress: () => setShowFeedback(true) },
             ]);
         } catch (err: any) {
@@ -277,6 +336,7 @@ export default function CheckInScreen() {
         } finally {
             setShowFeedback(false);
             resetState();
+            fetchApps();
             setActionLoading(false);
         }
     };
@@ -302,6 +362,9 @@ export default function CheckInScreen() {
         setAttendanceId(null);
         setSelectedApp(null);
         setGeoFence(null);
+        setGpsState('idle');
+        setErrMsg('');
+
         setFeedbackRating('5');
         setFeedbackComment('');
         scannedRef.current = false;
@@ -420,6 +483,19 @@ export default function CheckInScreen() {
                     scrollEnabled={false}
                     javaScriptEnabled
                     domStorageEnabled
+                    onLoad={() => {
+                        mapReady.current = true;
+                        if (location) {
+                            mapRef.current?.injectJavaScript(
+                                `updateUser(${location.lat}, ${location.lon}); true;`
+                            );
+                        }
+                        if (geoFence) {
+                            mapRef.current?.injectJavaScript(
+                                `updateFence(${geoFence.latitude}, ${geoFence.longitude}, ${geoFence.radiusMeters}); true;`
+                            );
+                        }
+                    }}
                 />
 
                 {/* Geofence status strip */}
@@ -462,7 +538,7 @@ export default function CheckInScreen() {
                         {/* Step 1: Select Event */}
                         <Text style={styles.stepTitle}>Select Event</Text>
                         {activeApps.length === 0 ? (
-                            <Text style={styles.hint}>No approved applications. Get approved for an event first.</Text>
+                            <Text style={styles.hint}>No upcoming shifts. Use the QR code scanner below to check in at the venue.</Text>
                         ) : (
                             activeApps.map((app) => (
                                 <Card
@@ -483,36 +559,129 @@ export default function CheckInScreen() {
                             ))
                         )}
 
-                        {/* Action buttons */}
-                        <Button
-                            mode="contained"
-                            onPress={handleCheckIn}
-                            buttonColor={COLORS.primary}
-                            style={styles.mainButton}
-                            disabled={!location || !selectedApp || actionLoading || geoFenceLoading || (geoFence !== null && insideFence !== true)}
-                            loading={actionLoading}
-                            icon="map-marker-check"
-                        >
-                            GPS Check In
-                        </Button>
+                        {/* Action buttons — GPS state machine (matches web flow) */}
+                        {(() => {
+                            const checkInOpenTime = selectedApp?.shiftStartTime
+                                ? new Date(new Date(selectedApp.shiftStartTime).getTime() - 30 * 60 * 1000)
+                                : null;
+                            const isTooEarly = checkInOpenTime ? new Date() < checkInOpenTime : false;
 
-                        <View style={styles.dividerRow}>
-                            <View style={styles.dividerLine} />
-                            <Text style={styles.dividerText}>or</Text>
-                            <View style={styles.dividerLine} />
-                        </View>
+                            if (isTooEarly && checkInOpenTime) {
+                                return (
+                                    <>
+                                        <Button mode="contained" disabled buttonColor={COLORS.border} style={styles.mainButton} icon="clock-outline">
+                                            Check-In Not Yet Available
+                                        </Button>
+                                        <Text style={[styles.hint, { marginTop: 4 }]}>
+                                            Available from {checkInOpenTime.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                        </Text>
+                                    </>
+                                );
+                            }
 
-                        <Button
-                            mode="outlined"
-                            onPress={handleOpenQrScanner}
-                            textColor={COLORS.secondary}
-                            style={[styles.mainButton, { borderColor: COLORS.secondary }]}
-                            icon="qrcode-scan"
-                            loading={actionLoading}
-                            disabled={actionLoading}
-                        >
-                            Scan QR Code
-                        </Button>
+                            if (gpsState === 'idle') return (
+                                <>
+                                    <Button
+                                        mode="contained"
+                                        onPress={handleLocate}
+                                        buttonColor={COLORS.primary}
+                                        style={styles.mainButton}
+                                        disabled={!selectedApp || actionLoading || geoFenceLoading}
+                                        icon="map-marker-check"
+                                    >
+                                        Check In Now
+                                    </Button>
+                                    <View style={styles.dividerRow}>
+                                        <View style={styles.dividerLine} />
+                                        <Text style={styles.dividerText}>or</Text>
+                                        <View style={styles.dividerLine} />
+                                    </View>
+                                    <Button
+                                        mode="outlined"
+                                        onPress={handleOpenQrScanner}
+                                        textColor={COLORS.secondary}
+                                        style={[styles.mainButton, { borderColor: COLORS.secondary }]}
+                                        icon="qrcode-scan"
+                                        disabled={actionLoading}
+                                    >
+                                        Scan QR Code
+                                    </Button>
+                                </>
+                            );
+
+                            if (gpsState === 'locating') return (
+                                <View style={styles.locatingRow}>
+                                    <ActivityIndicator size="small" color={COLORS.primary} />
+                                    <Text style={styles.hint}>Getting your location…</Text>
+                                </View>
+                            );
+
+                            if (gpsState === 'ready') return (
+                                <>
+                                    <Text style={[styles.hint, { color: COLORS.text, fontWeight: '600' }]}>
+                                        📍 Your location detected. Confirm check-in:
+                                    </Text>
+                                    {errMsg ? <Text style={styles.errorText}>⚠️ {errMsg}</Text> : null}
+                                    <View style={styles.rowButtons}>
+                                        <Button
+                                            mode="outlined"
+                                            onPress={() => { setGpsState('idle'); setErrMsg(''); }}
+                                            textColor={COLORS.textSecondary}
+                                            style={[styles.rowBtn, { borderColor: COLORS.border }]}
+                                        >
+                                            Cancel
+                                        </Button>
+                                        <Button
+                                            mode="outlined"
+                                            onPress={handleLocate}
+                                            textColor={COLORS.primary}
+                                            style={[styles.rowBtn, { borderColor: COLORS.primary }]}
+                                            icon="crosshairs-gps"
+                                        >
+                                            Refresh
+                                        </Button>
+                                        <Button
+                                            mode="contained"
+                                            onPress={handleCheckIn}
+                                            buttonColor={COLORS.primary}
+                                            style={styles.rowBtn}
+                                            loading={actionLoading}
+                                            disabled={actionLoading || (geoFence !== null && insideFence !== true)}
+                                            icon="check"
+                                        >
+                                            Confirm
+                                        </Button>
+                                    </View>
+                                </>
+                            );
+
+                            // gpsState === 'error'
+                            return (
+                                <>
+                                    <Text style={styles.errorText}>⚠️ {errMsg}</Text>
+                                    <View style={styles.rowButtons}>
+                                        <Button
+                                            mode="contained"
+                                            onPress={handleOpenQrScanner}
+                                            buttonColor={COLORS.success}
+                                            style={styles.rowBtn}
+                                            icon="qrcode-scan"
+                                            disabled={actionLoading}
+                                        >
+                                            Scan QR Code
+                                        </Button>
+                                        <Button
+                                            mode="outlined"
+                                            onPress={() => { setGpsState('idle'); setErrMsg(''); }}
+                                            textColor={COLORS.textSecondary}
+                                            style={[styles.rowBtn, { borderColor: COLORS.border }]}
+                                        >
+                                            Retry GPS
+                                        </Button>
+                                    </View>
+                                </>
+                            );
+                        })()}
                     </>
                 ) : (
                     <>
@@ -639,6 +808,10 @@ const styles = StyleSheet.create({
     dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 4 },
     dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
     dividerText: { color: COLORS.textSecondary, fontSize: 12 },
+    locatingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
+    errorText: { color: COLORS.error, fontSize: 13, fontWeight: '500', marginBottom: 8 },
+    rowButtons: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
+    rowBtn: { flex: 1, borderRadius: 10 },
 
     checkedInBadge: {
         flexDirection: 'row', alignItems: 'center', gap: 8,

@@ -1,8 +1,6 @@
-// API base URL
-// DEV: Android emulator reaches host via 10.0.2.2. Vite dev server (port 3000)
-// proxies /api/* to the cloud backend via WireGuard.
-// Change to production URL (e.g. https://www.vsms.foo) for release builds.
-export const API_BASE_URL = 'http://10.0.2.2:3000';
+// API base URL — remote backend
+// DEV: switch to 'http://10.0.2.2:3000' if using Vite proxy on Android emulator.
+export const API_BASE_URL = 'https://www.vsms.foo';
 
 export const COLORS = {
     primary: '#f59e0b',       // Amber — matches web primary brand color

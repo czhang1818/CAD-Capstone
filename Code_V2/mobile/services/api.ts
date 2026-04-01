@@ -14,16 +14,27 @@ api.interceptors.request.use(async (config) => {
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
     }
+    console.log(`[Axios Request] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
 });
 
+import { useAuthStore } from '../stores/authStore';
+
 // Response interceptor — handle 401
 api.interceptors.response.use(
-    (response) => response,
+    (response) => {
+        console.log(`[Axios Response] ${response.status} ${response.config.url}`);
+        return response;
+    },
     async (error) => {
-        if (error.response?.status === 401) {
-            await SecureStore.deleteItemAsync('token');
-            // Auth store will handle redirect
+        console.log(`[Axios Error] ${error.message} on ${error.config?.url}`);
+        if (error.response) {
+            console.log(`[Axios Error Response] Status: ${error.response.status}`);
+            if (error.response.status === 401) {
+                await useAuthStore.getState().logout();
+            }
+        } else {
+            console.log(`[Axios Raw Error]`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
         }
         return Promise.reject(error);
     }

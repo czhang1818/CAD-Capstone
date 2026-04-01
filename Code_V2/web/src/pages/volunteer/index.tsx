@@ -93,21 +93,21 @@ function GpsCheckInButton({ attendanceId, opportunityId, shiftStartTime, onDone 
 
     const locate = () => {
         if (!navigator.geolocation) {
-            setErrMsg('当前设备不支持定位，请使用现场二维码签到。');
+            setErrMsg('Geolocation is not supported on this device. Please use the on-site QR code to check in.');
             setGpsState('error');
             return;
         }
         setGpsState('locating');
         navigator.geolocation.getCurrentPosition(
             (pos) => { setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }); setGpsState('ready'); },
-            () => { setErrMsg('定位失败或权限被拒绝，请使用现场二维码签到。'); setGpsState('error'); },
+            () => { setErrMsg('Location failed or permission denied. Please use the on-site QR code to check in.'); setGpsState('error'); },
             { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
         );
     };
 
     const doCheckIn = async () => {
         if (!coords) {
-            setErrMsg('未获取到定位，请使用现场二维码签到。');
+            setErrMsg('Could not get your location. Please use the on-site QR code to check in.');
             setGpsState('error');
             return;
         }
@@ -121,7 +121,7 @@ function GpsCheckInButton({ attendanceId, opportunityId, shiftStartTime, onDone 
 
     const doQrFallback = async () => {
         if (!qrToken.trim()) {
-            setErrMsg('请输入或粘贴现场二维码里的 token。');
+            setErrMsg('Please enter or paste the token from the on-site QR code.');
             return;
         }
         setQrLoading(true);
@@ -168,11 +168,11 @@ function GpsCheckInButton({ attendanceId, opportunityId, shiftStartTime, onDone 
                     type="text"
                     value={qrToken}
                     onChange={e => setQrToken(e.target.value)}
-                    placeholder="粘贴现场二维码 token"
+                    placeholder="Paste on-site QR code token"
                     className="px-3 py-2 rounded-lg border border-stone-200 text-xs"
                 />
                 <button onClick={() => { void doQrFallback(); }} disabled={qrLoading || !qrToken.trim()} className="text-xs font-bold text-white bg-emerald-500 px-3 py-1.5 rounded-lg hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-1">
-                    {qrLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : '🔐'} QR 签到
+                    {qrLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : '🔐'} QR Check-In
                 </button>
                 <button onClick={() => { setGpsState('idle'); setErrMsg(''); }} className="text-xs font-bold text-stone-500 bg-stone-100 px-3 py-1.5 rounded-lg hover:bg-stone-200">
                     Retry GPS
@@ -1371,9 +1371,9 @@ export function VolAttendance() {
                 <div><p className="text-4xl font-extrabold">{totalHours.toFixed(1)} hrs</p><p className="text-orange-100 font-medium mt-1">{records.length} session{records.length !== 1 ? 's' : ''}</p></div>
             </div>
 
-            {loading ? <Spinner /> : error ? <ErrorBox msg={error} onRetry={load} /> : records.length === 0 ? <Empty msg="No attendance records yet." /> : (
+            {loading ? <Spinner /> : error ? <ErrorBox msg={error} onRetry={load} /> : records.filter(r => r.status !== AttendanceStatus.Pending).length === 0 ? <Empty msg="No attendance records yet." /> : (
                 <div className="space-y-4">
-                    {records.map(r => (
+                    {records.filter(r => r.status !== AttendanceStatus.Pending).map(r => (
                         <div key={r.attendanceId} className="bg-white rounded-2xl p-5 shadow-sm border border-stone-100">
                             <div className="flex justify-between items-start mb-3">
                                 <p className="font-bold text-stone-800">{r.opportunityTitle}</p>

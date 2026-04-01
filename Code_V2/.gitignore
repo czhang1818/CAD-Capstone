@@ -1,5 +1,5 @@
 # .gitignore for VSMS (Full Stack .NET + React Native)
-
+mobile/*.apk
 # ====================
 # OS Specific
 # ====================

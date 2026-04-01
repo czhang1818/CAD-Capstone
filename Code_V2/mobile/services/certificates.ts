@@ -10,6 +10,9 @@ export interface CertificateTemplate {
     primaryColor: string;
     accentColor: string;
     isSystemPreset: boolean;
+    titleText?: string;
+    signatoryName?: string;
+    signatoryTitle?: string;
 }
 
 export interface CertificateTemplateDetail {
@@ -34,6 +37,30 @@ export interface GenerateCertificateResult {
     fileKey: string;
     downloadUrl: string;
     fileName: string;
+    certificateId: string;
+    verifyUrl: string;
+}
+
+export interface IssueCertificateResult {
+    certificateId: string;
+    verifyUrl: string;
+}
+
+export interface CertificateVerificationRecord {
+    certificateId: string;
+    isValid: boolean;
+    isRevoked: boolean;
+    revokedAt: string | null;
+    volunteerName: string;
+    organizationName: string;
+    templateName: string;
+    templateType: 'achievement_certificate' | 'hours_log';
+    totalHours: number;
+    completedOpportunities: number;
+    issuedAt: string;
+    signatoryName: string | null;
+    signatoryTitle: string | null;
+    fileName: string | null;
 }
 
 export const certificateService = {
@@ -101,9 +128,26 @@ export const certificateService = {
         return res.data;
     },
 
+    // Issue an official certificate (creates verification record)
+    issue: async (volunteerId: string, templateId: string, volunteerSignatureName?: string): Promise<IssueCertificateResult> => {
+        const res = await api.post<IssueCertificateResult>('/api/certificates/issue', {
+            volunteerId,
+            templateId,
+            volunteerSignatureName,
+        });
+        return res.data;
+    },
+
+    // Verify a certificate by ID
+    verify: async (certificateId: string): Promise<CertificateVerificationRecord> => {
+        const res = await api.get<CertificateVerificationRecord>(`/api/certificates/verify/${encodeURIComponent(certificateId)}`);
+        return res.data;
+    },
+
     // Seed system preset templates (admin only, call once)
     seedPresets: async (): Promise<string> => {
         const res = await api.post<string>('/api/certificates/seed-presets');
         return res.data;
     },
 };
+

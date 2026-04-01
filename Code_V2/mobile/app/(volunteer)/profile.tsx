@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, Alert, Switch, Linking, TouchableOpacity } from 'react-native';
-import { Avatar, Button, Card, Text, Surface, Divider, ActivityIndicator, Portal, Modal, TextInput } from 'react-native-paper';
+import { Avatar, Button, Card, Text, Surface, Divider, ActivityIndicator, Portal, Modal, TextInput, Chip } from 'react-native-paper';
 import { router } from 'expo-router';
 import { COLORS } from '../../constants/config';
 import { useAuthStore } from '../../stores/authStore';
@@ -238,6 +238,79 @@ export default function ProfileScreen() {
                 ) : null}
             </Surface>
 
+            {/* Waiver & Background Check */}
+            <Card style={styles.actionsCard} mode="outlined">
+                <Card.Content>
+                    <Text variant="titleSmall" style={{ color: COLORS.text, fontWeight: '700', marginBottom: 10 }}>Compliance Status</Text>
+                    <View style={styles.complianceRow}>
+                        <MaterialCommunityIcons
+                            name={profile?.waiverSignedAt ? 'check-circle' : 'alert-circle-outline'}
+                            size={20}
+                            color={profile?.waiverSignedAt ? COLORS.success : COLORS.warning}
+                        />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={{ color: COLORS.text, fontSize: 14 }}>Liability Waiver</Text>
+                            <Text style={{ color: COLORS.textSecondary, fontSize: 12, marginTop: 2 }}>
+                                {profile?.waiverSignedAt
+                                    ? `Signed on ${new Date(profile.waiverSignedAt).toLocaleDateString()}`
+                                    : 'Not yet signed'}
+                            </Text>
+                        </View>
+                        {!profile?.waiverSignedAt && (
+                            <Button
+                                compact
+                                mode="contained"
+                                buttonColor={COLORS.primary}
+                                onPress={async () => {
+                                    if (!linkedGrainId) return;
+                                    try {
+                                        await volunteerService.signWaiver(linkedGrainId);
+                                        Alert.alert('Success', 'Waiver signed successfully!');
+                                        await fetchProfile();
+                                    } catch (err: any) {
+                                        Alert.alert('Error', err.response?.data?.toString() || 'Failed to sign waiver');
+                                    }
+                                }}
+                            >
+                                Sign
+                            </Button>
+                        )}
+                    </View>
+                    <Divider style={[styles.divider, { marginVertical: 8 }]} />
+                    <View style={styles.complianceRow}>
+                        <MaterialCommunityIcons
+                            name={profile?.backgroundCheckStatus === 'Verified' ? 'shield-check' : 'shield-alert-outline'}
+                            size={20}
+                            color={profile?.backgroundCheckStatus === 'Verified' ? COLORS.success
+                                : profile?.backgroundCheckStatus === 'Pending' ? COLORS.warning
+                                : COLORS.textSecondary}
+                        />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={{ color: COLORS.text, fontSize: 14 }}>Background Check</Text>
+                            <Text style={{ color: COLORS.textSecondary, fontSize: 12, marginTop: 2 }}>
+                                {profile?.backgroundCheckStatus || 'Not submitted'}
+                            </Text>
+                        </View>
+                        <Chip
+                            compact
+                            style={{
+                                backgroundColor: profile?.backgroundCheckStatus === 'Verified' ? COLORS.success + '18'
+                                    : profile?.backgroundCheckStatus === 'Pending' ? COLORS.warning + '18'
+                                    : COLORS.surfaceLight
+                            }}
+                            textStyle={{
+                                color: profile?.backgroundCheckStatus === 'Verified' ? COLORS.success
+                                    : profile?.backgroundCheckStatus === 'Pending' ? COLORS.warning
+                                    : COLORS.textSecondary,
+                                fontSize: 11,
+                            }}
+                        >
+                            {profile?.backgroundCheckStatus || 'N/A'}
+                        </Chip>
+                    </View>
+                </Card.Content>
+            </Card>
+
             {/* Impact Stats */}
             <View style={styles.statsRow}>
                 <Surface style={styles.statCard} elevation={1}>
@@ -272,7 +345,7 @@ export default function ProfileScreen() {
                     <Divider style={styles.divider} />
                     <ActionRow icon="domain" label="Browse Organizations" onPress={() => router.push('/(volunteer)/organizations')} />
                     <Divider style={styles.divider} />
-                    <ActionRow icon="bell-outline" label="Notifications" onPress={openNotifications} />
+                    <ActionRow icon="bell-outline" label="Notifications" onPress={() => router.push('/(volunteer)/notifications')} />
                     <Divider style={styles.divider} />
                     <ActionRow icon="lock-outline" label="Privacy Settings" onPress={openPrivacy} />
                 </Card.Content>
@@ -629,4 +702,5 @@ const styles = StyleSheet.create({
     toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
     toggleLabel: { color: COLORS.text, fontSize: 15, fontWeight: '500' },
     toggleHint: { color: COLORS.textSecondary, fontSize: 12, marginTop: 2 },
+    complianceRow: { flexDirection: 'row', alignItems: 'center' },
 });

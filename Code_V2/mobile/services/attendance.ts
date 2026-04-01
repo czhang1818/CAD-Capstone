@@ -1,6 +1,16 @@
 import api from './api';
 import { AttendanceRecordState, AttendanceSummary } from '../types/attendance';
 
+export interface DisputeSummary {
+    attendanceId: string;
+    volunteerId: string;
+    volunteerName: string;
+    opportunityTitle: string;
+    reason: string;
+    evidenceUrl: string;
+    raisedAt: string;
+}
+
 export const attendanceService = {
     getById: async (id: string): Promise<AttendanceRecordState> => {
         const res = await api.get<AttendanceRecordState>(`/api/attendance/${id}`);
@@ -25,6 +35,10 @@ export const attendanceService = {
         await api.post(`/api/attendance/${id}/checkin`, data);
     },
 
+    qrCheckIn: async (id: string, data: { qrToken: string }): Promise<void> => {
+        await api.post(`/api/attendance/${id}/qr-checkin`, data);
+    },
+
     checkOut: async (id: string): Promise<void> => {
         await api.post(`/api/attendance/${id}/checkout`);
     },
@@ -45,14 +59,9 @@ export const attendanceService = {
         const res = await api.get<DisputeSummary[]>('/api/attendance/disputes/pending');
         return res.data;
     },
+
+    resolveDispute: async (id: string, data: { resolverId: string; resolution: string; adjustedHours: number }): Promise<void> => {
+        await api.post(`/api/attendance/${id}/resolve`, data);
+    },
 };
 
-export interface DisputeSummary {
-    attendanceId: string;
-    volunteerId: string;
-    volunteerName: string;
-    opportunityTitle: string;
-    reason: string;
-    evidenceUrl: string;
-    raisedAt: string;
-}

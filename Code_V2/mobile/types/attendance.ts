@@ -23,6 +23,7 @@ export interface AttendanceSummary {
     volunteerName: string;
     opportunityTitle: string;
     status: AttendanceStatus;
+    shiftStartTime: string | null;
     checkInTime: string | null;
     checkOutTime: string | null;
     totalHours: number;

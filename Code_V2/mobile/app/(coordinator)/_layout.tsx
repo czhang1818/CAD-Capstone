@@ -1,9 +1,11 @@
 import { Tabs } from 'expo-router';
 import { COLORS } from '../../constants/config';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AIAssistant from '../../components/AIAssistant';
 
 export default function OrganizationLayout() {
     return (
+        <>
         <Tabs
             screenOptions={{
                 headerStyle: { backgroundColor: COLORS.surface },
@@ -49,5 +51,7 @@ export default function OrganizationLayout() {
                 }}
             />
         </Tabs>
+            <AIAssistant userRole="coordinator" />
+        </>
     );
 }

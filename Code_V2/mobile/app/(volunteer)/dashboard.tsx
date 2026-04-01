@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
-import { Text, Surface, Card, Chip, ActivityIndicator, Button } from 'react-native-paper';
+import { Text, Surface, Card, Chip, ActivityIndicator, Button, Badge } from 'react-native-paper';
 import { router } from 'expo-router';
 import { COLORS } from '../../constants/config';
 import { useAuthStore } from '../../stores/authStore';
 import { volunteerService, VolunteerProfile } from '../../services/volunteers';
+import { notificationService } from '../../services/notifications';
 import { AttendanceSummary } from '../../types/attendance';
 import { AttendanceStatus } from '../../types/enums';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -56,15 +57,18 @@ export default function DashboardScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [profile, setProfile] = useState<VolunteerProfile | null>(null);
     const [attendanceHistory, setAttendanceHistory] = useState<AttendanceSummary[]>([]);
+    const [unreadCount, setUnreadCount] = useState(0);
 
     const load = useCallback(async () => {
         if (!linkedGrainId) { setLoading(false); return; }
         try {
-            const [p, attendance] = await Promise.all([
+            const [p, attendance, notifCount] = await Promise.all([
                 volunteerService.getProfile(linkedGrainId),
                 volunteerService.getAttendance(linkedGrainId),
+                notificationService.getUnreadCount().catch(() => 0),
             ]);
             setProfile(p);
+            setUnreadCount(notifCount);
             setAttendanceHistory(
                 attendance
                     .sort((a, b) => {
@@ -128,8 +132,13 @@ export default function DashboardScreen() {
             <Surface style={styles.actionsGrid} elevation={1}>
                 <QuickAction icon="compass" label="Explore" color={COLORS.primary} onPress={() => router.push('/(volunteer)/home')} />
                 <QuickAction icon="qrcode-scan" label="Check In" color={COLORS.success} onPress={() => router.push('/(volunteer)/checkin')} />
-                <QuickAction icon="domain" label="Orgs" color={COLORS.secondary} onPress={() => router.push('/(volunteer)/organizations')} />
-                <QuickAction icon="clipboard-list" label="Applications" color="#7C3AED" onPress={() => router.push('/(volunteer)/my-applications')} />
+                <View style={{ position: 'relative', flex: 1 }}>
+                    <QuickAction icon="bell-outline" label="Inbox" color="#0ea5e9" onPress={() => router.push('/(volunteer)/notifications')} />
+                    {unreadCount > 0 && (
+                        <Badge size={18} style={styles.badge}>{unreadCount > 9 ? '9+' : unreadCount}</Badge>
+                    )}
+                </View>
+                <QuickAction icon="clipboard-list" label="Apps" color="#7C3AED" onPress={() => router.push('/(volunteer)/my-applications')} />
             </Surface>
 
             {/* Attendance History */}
@@ -226,6 +235,7 @@ const styles = StyleSheet.create({
     actionCard: { alignItems: 'center', flex: 1 },
     actionIconBg: { width: 52, height: 52, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
     actionLabel: { color: COLORS.text, fontSize: 11, fontWeight: '600', textAlign: 'center' },
+    badge: { position: 'absolute', top: -2, right: 8, backgroundColor: COLORS.error, color: '#fff', fontWeight: '700' },
 
     emptyCard: { backgroundColor: COLORS.surface, borderColor: COLORS.border, borderRadius: 12 },
     emptyContent: { alignItems: 'center', paddingVertical: 28 },
