@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, ScrollView, Switch, Text as RNText } from 'react-native';
 import { Searchbar, Card, Text, Button, ActivityIndicator } from 'react-native-paper';
-import MapView, { Marker, Circle, Callout } from 'react-native-maps';
+import MapView, { Marker, Circle, Callout, UrlTile } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { COLORS } from '../../constants/config';
@@ -248,7 +248,15 @@ export default function HomeScreen() {
                             longitudeDelta: 0.15,
                         }}
                         showsUserLocation={false}
+                        mapType="none"
                     >
+                        {/* OpenStreetMap tiles */}
+                        <UrlTile
+                            urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                            maximumZ={19}
+                            flipY={false}
+                        />
+
                         {/* User location pin + 5km radius */}
                         {coords && (
                             <>
