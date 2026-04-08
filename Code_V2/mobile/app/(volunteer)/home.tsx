@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, ScrollView, Switch, Text as RNText } from 'react-native';
+import { View, FlatList, StyleSheet, RefreshControl, TouchableOpacity, ScrollView, Switch, Text as RNText, Dimensions } from 'react-native';
 import { Searchbar, Card, Text, Button, ActivityIndicator } from 'react-native-paper';
-import MapView, { Marker, Circle, Callout, UrlTile } from 'react-native-maps';
+import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { COLORS } from '../../constants/config';
@@ -28,8 +28,65 @@ const CHIP_INACTIVE: Record<string, string> = {
     'Technology': '#7c3aed',
 };
 
+const MAP_HTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body,#map{height:100%;width:100%;background:#f5f5f4;}
+  .popup-btn{background:#f59e0b;color:#fff;border:none;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:700;width:100%;margin-top:6px;cursor:pointer;}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+var map = L.map('map',{zoomControl:true,attributionControl:false});
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+map.setView([43.4643,-80.5204],13);
+var userMarker=null,userCircle=null,pins=[];
+function updateUser(lat,lon){
+  if(userMarker)map.removeLayer(userMarker);
+  if(userCircle)map.removeLayer(userCircle);
+  userMarker=L.circleMarker([lat,lon],{radius:10,fillColor:'#3b82f6',color:'#fff',weight:3,fillOpacity:1}).addTo(map).bindPopup('<b>You</b>');
+  userCircle=L.circle([lat,lon],{radius:5000,fillColor:'#3b82f6',fillOpacity:0.07,color:'#3b82f6',weight:1}).addTo(map);
+  map.setView([lat,lon],13);
+}
+function loadOpps(opps){
+  pins.forEach(function(p){map.removeLayer(p);});
+  pins=[];
+  opps.forEach(function(o){
+    if(!o.lat||!o.lon)return;
+    var icon=L.divIcon({html:'<div style="width:16px;height:16px;border-radius:50%;background:#22c55e;border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35)"></div>',iconSize:[16,16],iconAnchor:[8,8],className:''});
+    var dist=o.dist!=null?'<br><span style="color:#f59e0b;font-weight:600;">'+o.dist.toFixed(1)+' km</span>':'';
+    var popup='<b>'+o.title+'</b><br><span style="color:#78716c;font-size:12px;">'+o.org+'</span>'+dist+'<br><button class="popup-btn" onclick="window.ReactNativeWebView.postMessage(JSON.stringify({type:\\'PIN_DETAIL\\',id:\\''+o.id+'\\'}))">View Details →</button>';
+    pins.push(L.marker([o.lat,o.lon],{icon:icon}).addTo(map).bindPopup(popup));
+  });
+}
+function centerOn(lat,lon,zoom){map.setView([lat,lon],zoom||13);}
+</script>
+</body>
+</html>`;
+
+function buildInjectScript(
+    opps: OpportunityRecommendation[],
+    userCoords: { lat: number; lon: number } | null
+): string {
+    const oppsJson = JSON.stringify(opps.map(o => ({
+        id: o.opportunityId, title: o.title, org: o.organizationName,
+        lat: o.latitude, lon: o.longitude, dist: o.distanceKm,
+    })));
+    const userPart = userCoords
+        ? `updateUser(${userCoords.lat},${userCoords.lon});`
+        : '';
+    return `${userPart} loadOpps(${oppsJson}); true;`;
+}
+
 function asRecommendation(o: OpportunitySummary): OpportunityRecommendation {
-    return { ...o, distanceKm: null, recommendationScore: 0, matchedSkillCount: 0, requiredSkillCount: 0 };
+    return { ...o, distanceKm: null, recommendationScore: 0, matchedSkillCount: 0, requiredSkillCount: 0, skillMatchRatio: 0 };
 }
 
 export default function HomeScreen() {
@@ -44,8 +101,16 @@ export default function HomeScreen() {
     const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
     const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
     const [locationStatus, setLocationStatus] = useState<'idle' | 'locating' | 'ready' | 'denied'>('idle');
-    const [selectedOppId, setSelectedOppId] = useState<string | null>(null);
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<WebView>(null);
+    const mapReady = useRef(false);
+
+    const injectMapData = useCallback((
+        opps: OpportunityRecommendation[],
+        userCoords: { lat: number; lon: number } | null
+    ) => {
+        if (!mapReady.current) return;
+        mapRef.current?.injectJavaScript(buildInjectScript(opps, userCoords));
+    }, []);
 
     const { linkedGrainId, userId } = useAuthStore();
 
@@ -87,7 +152,7 @@ export default function HomeScreen() {
                     setLocationStatus('denied');
                     return;
                 }
-                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
                 const c = { lat: loc.coords.latitude, lon: loc.coords.longitude };
                 setCoords(c);
                 setLocationStatus('ready');
@@ -96,7 +161,7 @@ export default function HomeScreen() {
                 setLocationStatus('denied');
             }
         })();
-    }, [viewMode]);
+    }, [viewMode, locationStatus]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -116,6 +181,13 @@ export default function HomeScreen() {
 
     const mappableOpps = filtered.filter(o => o.latitude != null && o.longitude != null);
     const hasActiveFilters = selectedCategory !== '' || availableOnly;
+
+    // Re-inject map data whenever opps or coords change while map is visible
+    useEffect(() => {
+        if (viewMode === 'map') {
+            injectMapData(mappableOpps, coords);
+        }
+    }, [mappableOpps, coords, viewMode]);
 
     const resetFilters = () => {
         setSearch('');
@@ -238,79 +310,36 @@ export default function HomeScreen() {
                             <RNText style={styles.mapOverlayText}>Location unavailable — tap to retry</RNText>
                         </TouchableOpacity>
                     )}
-                    <MapView
+                    <WebView
                         ref={mapRef}
                         style={styles.map}
-                        initialRegion={{
-                            latitude: coords?.lat ?? 43.4643,
-                            longitude: coords?.lon ?? -80.5204,
-                            latitudeDelta: 0.15,
-                            longitudeDelta: 0.15,
+                        originWhitelist={['*']}
+                        javaScriptEnabled
+                        domStorageEnabled
+                        scrollEnabled={false}
+                        source={{ html: MAP_HTML }}
+                        onLoad={() => {
+                            mapReady.current = true;
+                            mapRef.current?.injectJavaScript(buildInjectScript(mappableOpps, coords));
                         }}
-                        showsUserLocation={false}
-                        mapType="none"
-                    >
-                        {/* OpenStreetMap tiles */}
-                        <UrlTile
-                            urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            maximumZ={19}
-                            flipY={false}
-                        />
-
-                        {/* User location pin + 5km radius */}
-                        {coords && (
-                            <>
-                                <Marker
-                                    coordinate={{ latitude: coords.lat, longitude: coords.lon }}
-                                    pinColor="blue"
-                                    title="You"
-                                />
-                                <Circle
-                                    center={{ latitude: coords.lat, longitude: coords.lon }}
-                                    radius={5000}
-                                    fillColor="rgba(59,130,246,0.08)"
-                                    strokeColor="rgba(59,130,246,0.5)"
-                                    strokeWidth={2}
-                                />
-                            </>
-                        )}
-
-                        {/* Opportunity pins */}
-                        {mappableOpps.map(opp => (
-                            <Marker
-                                key={opp.opportunityId}
-                                coordinate={{ latitude: opp.latitude!, longitude: opp.longitude! }}
-                                pinColor={selectedOppId === opp.opportunityId ? 'orange' : 'green'}
-                                onPress={() => setSelectedOppId(opp.opportunityId)}
-                            >
-                                <Callout onPress={() => router.push({
-                                    pathname: '/(volunteer)/opportunity-detail',
-                                    params: { id: opp.opportunityId }
-                                })}>
-                                    <View style={styles.callout}>
-                                        <RNText style={styles.calloutTitle} numberOfLines={2}>{opp.title}</RNText>
-                                        <RNText style={styles.calloutOrg}>{opp.organizationName}</RNText>
-                                        {opp.distanceKm != null && (
-                                            <RNText style={styles.calloutDist}>{opp.distanceKm.toFixed(1)} km away</RNText>
-                                        )}
-                                        <RNText style={styles.calloutTap}>Tap to view details →</RNText>
-                                    </View>
-                                </Callout>
-                            </Marker>
-                        ))}
-                    </MapView>
+                        onMessage={(e) => {
+                            try {
+                                const msg = JSON.parse(e.nativeEvent.data);
+                                if (msg.type === 'PIN_DETAIL') {
+                                    router.push({ pathname: '/(volunteer)/opportunity-detail', params: { id: msg.id } });
+                                }
+                            } catch { }
+                        }}
+                    />
 
                     {/* My Location button */}
                     <TouchableOpacity
                         style={styles.myLocationBtn}
                         onPress={() => {
                             if (coords) {
-                                mapRef.current?.animateToRegion({
-                                    latitude: coords.lat,
-                                    longitude: coords.lon,
-                                    latitudeDelta: 0.08,
-                                    longitudeDelta: 0.08,
-                                }, 800);
+                                mapRef.current?.injectJavaScript(
+                                    `map.setView([${coords.lat}, ${coords.lon}], 14); true;`
+                                );
                             } else {
                                 setLocationStatus('idle');
                             }
@@ -483,7 +512,7 @@ const styles = StyleSheet.create({
     resultsCount: { color: COLORS.textSecondary, fontSize: 13 },
 
     // Map
-    mapContainer: { flex: 1, position: 'relative' },
+    mapContainer: { height: Dimensions.get('window').height - 260, position: 'relative' },
     map: { flex: 1 },
     mapOverlay: {
         position: 'absolute', top: 12, left: 16, right: 16, zIndex: 10,
